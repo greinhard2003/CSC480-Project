@@ -6,6 +6,7 @@ numpy version < 2.0
     pip install gym-super-mario-bros
     pip install stable-baselines3
     pip install Shimmy
+    pip install opencv-python
 
 gym-super-mario-bross may require Visual Studio Build Tools for C++
 
