@@ -1,4 +1,5 @@
 import time
+import gym
 import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
 from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
@@ -9,18 +10,19 @@ import cv2
 # Source - https://stackoverflow.com/questions/76509663/typeerror-joypadspace-reset-got-an-unexpected-keyword-argument-seed-when-i
 # Posted by aaron
 # Retrieved 2026-01-27, License - CC BY-SA 4.0
-
 JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
 
-
-# Environment factory
-def make_mario_env():
-    def _init(render="rgb_array"):
-        # Create env and bind the simple action set
-        env = gym_super_mario_bros.make('SuperMarioBros-v0', apply_api_compatibility=True, render_mode=render)
+def make_mario_env(render_mode="rgb_array"):
+    def _init():
+        env = gym.make(
+            "SuperMarioBros-v0",
+            render_mode=render_mode,
+            apply_api_compatibility=True,
+        )
         env = JoypadSpace(env, SIMPLE_MOVEMENT)
         return env
     return _init
+
 
 # Helper to stack frames in grid for rendering
 def stack_frames_grid(obs, rows, cols):
@@ -101,6 +103,9 @@ if __name__ == "__main__":
                 if (random):
                     actions = [vec_env.action_space.sample() for _ in range(NUM_ENV)]
                     obs, rewards, dones, infos = vec_env.step(actions)
+                    for i, r in enumerate(rewards):
+                        print(f"env {i}: reward = {r}")
+
                 else:
                     actions = [ACTION_TO_TRY]*NUM_ENV
                     obs, reward, dones, infos = vec_env.step(actions)
@@ -114,10 +119,6 @@ if __name__ == "__main__":
                     if cv2.waitKey(int(frame_dt*1000)) & 0xFF == 27:
                         break
 
-                # Reset any finished envs individually
-                for i, done in enumerate(dones):
-                    if done:
-                        vec_env.envs[i].reset()
         except KeyboardInterrupt:
             print("Stopped by user")
         finally:
