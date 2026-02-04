@@ -66,7 +66,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         model_path = sys.argv[1]
     else:
-        model_path = "./models/mario_ppo_130000_steps.zip"
+        model_path = "./models/mario_ppo_final.zip"
 
     print("="*60)
     print("Super Mario Bros - Trained Model Testing")
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     print(f"Action space: {env.action_space}")
     print("="*60)
 
-    FPS = 500.0
+    FPS = 60.0
     frame_dt = 1.0 / FPS
 
     episode = 0
