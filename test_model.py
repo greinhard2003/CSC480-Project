@@ -66,7 +66,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         model_path = sys.argv[1]
     else:
-        model_path = "./models/mario_ppo_50000_steps.zip"
+        model_path = "./models/mario_ppo_130000_steps.zip"
 
     print("="*60)
     print("Super Mario Bros - Trained Model Testing")
@@ -101,11 +101,15 @@ if __name__ == "__main__":
     print(f"Action space: {env.action_space}")
     print("="*60)
 
-    FPS = 60.0
+    FPS = 500.0
     frame_dt = 1.0 / FPS
 
     episode = 0
     total_episodes = 5  # Number of episodes to run
+
+    # Track stats across all episodes
+    all_action_counts = {}
+    episode_stats = []
 
     try:
         while episode < total_episodes:
@@ -122,20 +126,21 @@ if __name__ == "__main__":
             if episode == 1:
                 print(f"Debug - Raw obs shape: {obs.shape}")
 
-            # Track action distribution
+            # Track action distribution for this episode
             action_counts = {}
 
             while not done:
-                # Transpose observation from HWC to CHW to match training format
-                # (VecTransposeImage does this during training)
+                # Transpose to CHW format to match training (SB3 auto-adds VecTransposeImage)
                 if len(obs.shape) == 3 and obs.shape[2] == 3:  # HWC format
                     obs_for_model = obs.transpose(2, 0, 1)  # Convert to CHW
                 else:
                     obs_for_model = obs
 
-                # Debug: print transposed shape on first step
+                # Debug: validate observations on first step
                 if episode == 1 and step_count == 0:
-                    print(f"Debug - Transposed obs shape for model: {obs_for_model.shape}")
+                    print(f"Debug - obs shape: {obs.shape} -> transposed: {obs_for_model.shape}")
+                    print(f"Debug - obs range: [{obs.min()}, {obs.max()}], std: {obs.std():.1f}")
+                    print(f"Debug - obs IS varying: {obs.std() > 10} (should be True)")
 
                 # Ensure observation is contiguous in memory
                 obs_for_model = np.ascontiguousarray(obs_for_model)
@@ -189,16 +194,25 @@ if __name__ == "__main__":
                     done = True
                     episode = total_episodes  # Exit outer loop too
 
-            print(f"Episode finished! Total reward: {episode_reward:.1f}, Steps: {step_count}, Final X: {info.get('x_pos', 0)}")
+            # Save episode stats
+            episode_stats.append({
+                'episode': episode,
+                'reward': episode_reward,
+                'steps': step_count,
+                'final_x': info.get('x_pos', 0),
+                'actions': action_counts.copy()
+            })
 
-            # Print action distribution
-            print("Action distribution:")
+            # Update overall action counts
+            for action_id, count in action_counts.items():
+                all_action_counts[action_id] = all_action_counts.get(action_id, 0) + count
+
+            # Find most common action this episode
             action_names = ['NOOP', 'right', 'right+A', 'right+B', 'right+A+B', 'A', 'left']
-            for action_id in sorted(action_counts.keys()):
-                count = action_counts[action_id]
-                percentage = (count / step_count) * 100
-                action_name = action_names[action_id] if action_id < len(action_names) else f"unknown_{action_id}"
-                print(f"  {action_name}: {count} times ({percentage:.1f}%)")
+            most_common = max(action_counts.items(), key=lambda x: x[1]) if action_counts else (0, 0)
+            most_common_name = action_names[most_common[0]] if most_common[0] < len(action_names) else "?"
+
+            print(f"  Reward: {episode_reward:.1f}, Steps: {step_count}, Final X: {info.get('x_pos', 0)}, Most used: {most_common_name}")
 
     except KeyboardInterrupt:
         print("\n\nStopped by user (Ctrl+C)")
@@ -206,5 +220,31 @@ if __name__ == "__main__":
     finally:
         env.close()
         cv2.destroyAllWindows()
+
+        # Print summary
+        print("\n" + "="*60)
+        print("SUMMARY")
+        print("="*60)
+
+        if episode_stats:
+            avg_reward = sum(s['reward'] for s in episode_stats) / len(episode_stats)
+            avg_x = sum(s['final_x'] for s in episode_stats) / len(episode_stats)
+            max_x = max(s['final_x'] for s in episode_stats)
+
+            print(f"\nEpisodes completed: {len(episode_stats)}")
+            print(f"Average reward: {avg_reward:.1f}")
+            print(f"Average final X: {avg_x:.1f}")
+            print(f"Best final X: {max_x}")
+
+            # Overall action distribution
+            print("\nOverall action distribution:")
+            action_names = ['NOOP', 'right', 'right+A', 'right+B', 'right+A+B', 'A', 'left']
+            total_actions = sum(all_action_counts.values())
+            for action_id in sorted(all_action_counts.keys()):
+                count = all_action_counts[action_id]
+                percentage = (count / total_actions) * 100
+                action_name = action_names[action_id] if action_id < len(action_names) else f"unknown_{action_id}"
+                print(f"  {action_name}: {count} times ({percentage:.1f}%)")
+
         print("\nEnvironment closed.")
         print("="*60)

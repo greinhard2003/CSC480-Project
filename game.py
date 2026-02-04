@@ -53,22 +53,20 @@ class FrameSkipWrapper(gym.Wrapper):
 class CustomRewardWrapper(gym.Wrapper):
     """
     Custom reward wrapper for Super Mario Bros.
-    Modifies the reward function to encourage desired behaviors.
+    Simplified and fixed to provide stable learning signals.
     """
     def __init__(self, env):
         super(CustomRewardWrapper, self).__init__(env)
-        self.prev_x_pos = 0
-        self.prev_score = 0
-        self.prev_coins = 0
-        self.prev_time = 400
+        self.prev_x_pos = None  # Will be set on first step
+        self.prev_time = None
+        self.max_x = 0
 
     def reset(self, **kwargs):
         obs = self.env.reset(**kwargs)
-        # Reset tracking variables
-        self.prev_x_pos = 0
-        self.prev_score = 0
-        self.prev_coins = 0
-        self.prev_time = 400
+        # Don't reset tracking variables here - will be set on first step
+        self.prev_x_pos = None
+        self.prev_time = None
+        self.max_x = 0
         return obs
 
     def step(self, action):
@@ -87,51 +85,48 @@ class CustomRewardWrapper(gym.Wrapper):
 
         # Extract info from the environment
         x_pos = info.get('x_pos', 0)
-        score = info.get('score', 0)
-        coins = info.get('coins', 0)
         time_left = info.get('time', 400)
-        status = info.get('status', 'small')
 
-        # Custom reward calculation
-        custom_reward = 0
+        # Initialize on first step
+        if self.prev_x_pos is None:
+            self.prev_x_pos = x_pos
+            self.prev_time = time_left
+            self.max_x = x_pos
 
-        # 1. Reward forward progress (most important)
+        # SIMPLIFIED REWARD FUNCTION
+        # Focus on the most important signal: forward progress
+        custom_reward = 0.0
+
+        # 1. Reward forward progress (scaled for frame skip)
         x_progress = x_pos - self.prev_x_pos
-        custom_reward += x_progress * 0.1  # Small reward for moving right
+        # Divide by skip to normalize (if using frame_skip=4, divide by 4)
+        custom_reward += x_progress * 0.025  # 0.1 / 4 for frame_skip=4
 
-        # 2. Penalize backward movement
-        if x_progress < 0:
-            custom_reward += x_progress * 0.2  # Stronger penalty for going left
+        # 2. Reward reaching new maximum x position (exploration bonus)
+        if x_pos > self.max_x:
+            custom_reward += (x_pos - self.max_x) * 0.05
+            self.max_x = x_pos
 
-        # 3. Reward score increase (coins, enemies defeated, etc.)
-        score_increase = score - self.prev_score
-        custom_reward += score_increase * 0.01
+        # 3. Small death penalty (not too large to allow exploration)
+        if done and x_pos < 3161:
+            custom_reward -= 10.0
 
-        # 4. Reward coin collection
-        coin_increase = coins - self.prev_coins
-        custom_reward += coin_increase * 1.0
-
-        # 5. Penalize death heavily
-        if done and x_pos < 3161:  # 3161 is roughly the flag position
-            custom_reward -= 50
-
-        # 6. Reward reaching the flag
+        # 4. Large reward for completing level
         if done and x_pos >= 3161:
-            custom_reward += 100
+            custom_reward += 50.0
 
-        # 7. Small time penalty to encourage speed
+        # 5. Tiny time penalty to encourage speed (optional)
         time_penalty = self.prev_time - time_left
-        if time_penalty > 1:  # Normal time passage
+        if time_penalty > 1:  # More than 1 second passed
             custom_reward -= 0.01
 
-        # Update previous values
+        # Update tracking variables
         self.prev_x_pos = x_pos
-        self.prev_score = score
-        self.prev_coins = coins
         self.prev_time = time_left
 
         # Always return gymnasium format (5-tuple) for compatibility with Stable-Baselines3
         return obs, custom_reward, terminated, truncated, info
+
 
 def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4):
     def _init():
@@ -143,7 +138,6 @@ def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4
         env = JoypadSpace(env, SIMPLE_MOVEMENT)
 
         # Apply frame skip wrapper to hold actions for multiple frames
-        # This allows Mario to jump higher by holding the jump button
         if frame_skip > 1:
             env = FrameSkipWrapper(env, skip=frame_skip)
 
@@ -295,5 +289,3 @@ if __name__ == "__main__":
             print("Stopped by user")
         finally:
             env.close()
-
-

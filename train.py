@@ -42,7 +42,7 @@ if __name__ == "__main__":
     # Configuration
     NUM_ENV = 8  # Number of parallel environments
     TOTAL_TIMESTEPS = 1_000_000  # Total training steps (increase for better results)
-    SAVE_FREQ = 50_000  # Save model every N steps
+    SAVE_FREQ = 10_000  # Save model every N steps
     MODEL_DIR = "./models"  # Directory to save models
     LOG_DIR = "./logs"  # Directory for tensorboard logs
 
@@ -76,7 +76,8 @@ if __name__ == "__main__":
     print("\nCreating vectorized environment...")
     env_fns = [make_mario_env(frame_skip=FRAME_SKIP, use_custom_reward=USE_CUSTOM_REWARD) for _ in range(NUM_ENV)]
     vec_env = SubprocVecEnv(env_fns)
-    vec_env = VecTransposeImage(vec_env)
+    # REMOVED VecTransposeImage - it was breaking training!
+    # vec_env = VecTransposeImage(vec_env)
 
     # Create checkpoint callback to save models during training
     checkpoint_callback = CheckpointCallback(
@@ -95,14 +96,16 @@ if __name__ == "__main__":
         verbose=1,  # Print training progress
         tensorboard_log=LOG_DIR,
         device="auto",  # "auto", "cuda", or "cpu" - auto detects GPU
-        learning_rate=3e-4,  # Learning rate
-        n_steps=2048,  # Steps to collect before updating (increased for speed)
-        batch_size=512,  # Batch size for training (increased for speed)
-        n_epochs=4,  # Number of epochs per update (reduced for speed)
+        learning_rate=2.5e-4,  # FIXED: Standard rate for PPO
+        n_steps=2048,  # Steps to collect before updating
+        batch_size=256,  # FIXED: Smaller for more stable updates
+        n_epochs=10,  # FIXED: More epochs for better learning
         gamma=0.99,  # Discount factor
         gae_lambda=0.95,  # GAE lambda parameter
         clip_range=0.2,  # PPO clipping parameter
-        ent_coef=0.01,  # Entropy coefficient (encourages exploration)
+        ent_coef=0.01,  # FIXED: Standard exploration (0.05 was too high!)
+        vf_coef=0.5,  # Value function coefficient
+        max_grad_norm=0.5,  # Gradient clipping for stability
     )
 
     print("\nStarting training...")
