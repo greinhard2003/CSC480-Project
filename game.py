@@ -6,6 +6,7 @@ from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage
 import numpy as np
 import cv2
+from env import MaxAndSkipEnv
 
 # Source - https://stackoverflow.com/questions/76509663/typeerror-joypadspace-reset-got-an-unexpected-keyword-argument-seed-when-i
 # Posted by aaron
@@ -20,6 +21,7 @@ def make_mario_env(render_mode="rgb_array"):
             apply_api_compatibility=True,
         )
         env = JoypadSpace(env, SIMPLE_MOVEMENT)
+        env = MaxAndSkipEnv(env)
         return env
     return _init
 
@@ -103,8 +105,8 @@ if __name__ == "__main__":
                 if (random):
                     actions = [vec_env.action_space.sample() for _ in range(NUM_ENV)]
                     obs, rewards, dones, infos = vec_env.step(actions)
-                    for i, r in enumerate(rewards):
-                        print(f"env {i}: reward = {r}")
+                    # for i, r in enumerate(rewards):
+                        # print(f"env {i}: reward = {r}")
 
                 else:
                     actions = [ACTION_TO_TRY]*NUM_ENV
