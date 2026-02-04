@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/usage.statistics.xml
+.idea/shelf/
+.vscode/
+*.swp
+*.swo
+
+# RL Training outputs
+models/
+logs/
+*.zip
+
+# Claude AI
+.ai/
+
+# OS
+.DS_Store
+Thumbs.db

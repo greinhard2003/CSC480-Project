@@ -12,7 +12,128 @@ import cv2
 # Retrieved 2026-01-27, License - CC BY-SA 4.0
 JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
 
-def make_mario_env(render_mode="rgb_array"):
+
+class FrameSkipWrapper(gym.Wrapper):
+    """
+    Repeat each action for N frames. This allows Mario to hold jump longer
+    and reach maximum jump height.
+    """
+    def __init__(self, env, skip=4):
+        super(FrameSkipWrapper, self).__init__(env)
+        self.skip = skip
+
+    def step(self, action):
+        total_reward = 0.0
+        done = False
+        terminated = False
+        truncated = False
+        info = {}
+
+        for _ in range(self.skip):
+            step_result = self.env.step(action)
+
+            if len(step_result) == 4:
+                obs, reward, done, info = step_result
+                terminated = done
+                truncated = False
+            elif len(step_result) == 5:
+                obs, reward, terminated, truncated, info = step_result
+                done = terminated or truncated
+            else:
+                raise ValueError(f"Unexpected step result format with {len(step_result)} values")
+
+            total_reward += reward
+
+            if done:
+                break
+
+        return obs, total_reward, terminated, truncated, info
+
+
+class CustomRewardWrapper(gym.Wrapper):
+    """
+    Custom reward wrapper for Super Mario Bros.
+    Modifies the reward function to encourage desired behaviors.
+    """
+    def __init__(self, env):
+        super(CustomRewardWrapper, self).__init__(env)
+        self.prev_x_pos = 0
+        self.prev_score = 0
+        self.prev_coins = 0
+        self.prev_time = 400
+
+    def reset(self, **kwargs):
+        obs = self.env.reset(**kwargs)
+        # Reset tracking variables
+        self.prev_x_pos = 0
+        self.prev_score = 0
+        self.prev_coins = 0
+        self.prev_time = 400
+        return obs
+
+    def step(self, action):
+        # Handle both gym (4-tuple) and gymnasium (5-tuple) formats
+        step_result = self.env.step(action)
+
+        if len(step_result) == 4:
+            obs, reward, done, info = step_result
+            terminated = done
+            truncated = False
+        elif len(step_result) == 5:
+            obs, reward, terminated, truncated, info = step_result
+            done = terminated or truncated
+        else:
+            raise ValueError(f"Unexpected step result format with {len(step_result)} values")
+
+        # Extract info from the environment
+        x_pos = info.get('x_pos', 0)
+        score = info.get('score', 0)
+        coins = info.get('coins', 0)
+        time_left = info.get('time', 400)
+        status = info.get('status', 'small')
+
+        # Custom reward calculation
+        custom_reward = 0
+
+        # 1. Reward forward progress (most important)
+        x_progress = x_pos - self.prev_x_pos
+        custom_reward += x_progress * 0.1  # Small reward for moving right
+
+        # 2. Penalize backward movement
+        if x_progress < 0:
+            custom_reward += x_progress * 0.2  # Stronger penalty for going left
+
+        # 3. Reward score increase (coins, enemies defeated, etc.)
+        score_increase = score - self.prev_score
+        custom_reward += score_increase * 0.01
+
+        # 4. Reward coin collection
+        coin_increase = coins - self.prev_coins
+        custom_reward += coin_increase * 1.0
+
+        # 5. Penalize death heavily
+        if done and x_pos < 3161:  # 3161 is roughly the flag position
+            custom_reward -= 50
+
+        # 6. Reward reaching the flag
+        if done and x_pos >= 3161:
+            custom_reward += 100
+
+        # 7. Small time penalty to encourage speed
+        time_penalty = self.prev_time - time_left
+        if time_penalty > 1:  # Normal time passage
+            custom_reward -= 0.01
+
+        # Update previous values
+        self.prev_x_pos = x_pos
+        self.prev_score = score
+        self.prev_coins = coins
+        self.prev_time = time_left
+
+        # Always return gymnasium format (5-tuple) for compatibility with Stable-Baselines3
+        return obs, custom_reward, terminated, truncated, info
+
+def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4):
     def _init():
         env = gym.make(
             "SuperMarioBros-v0",
@@ -20,6 +141,16 @@ def make_mario_env(render_mode="rgb_array"):
             apply_api_compatibility=True,
         )
         env = JoypadSpace(env, SIMPLE_MOVEMENT)
+
+        # Apply frame skip wrapper to hold actions for multiple frames
+        # This allows Mario to jump higher by holding the jump button
+        if frame_skip > 1:
+            env = FrameSkipWrapper(env, skip=frame_skip)
+
+        # Apply custom reward wrapper if enabled
+        if use_custom_reward:
+            env = CustomRewardWrapper(env)
+
         return env
     return _init
 
@@ -46,6 +177,15 @@ def stack_frames_grid(obs, rows, cols):
     return np.vstack(grid_rows)
 
 if __name__ == "__main__":
+    """
+    ============================================================
+    NOTE: This script is for TESTING the environment setup only.
+    It runs random actions and does NOT train an RL agent.
+
+    To actually TRAIN an agent, use: python train.py
+    To TEST a trained agent, use: python test_model.py
+    ============================================================
+    """
     # Print the mapping so you know which index equals which button combo
     print("SIMPLE_MOVEMENT mapping (index -> button tuple):")
     for i, action in enumerate(SIMPLE_MOVEMENT):
