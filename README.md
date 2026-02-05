@@ -10,6 +10,7 @@ Train an AI agent to play Super Mario Bros using PPO (Proximal Policy Optimizati
 ```bash
 pip install gym-super-mario-bros
 pip install stable-baselines3
+pip install stable-baselines3[extra]
 pip install Shimmy
 pip install opencv-python
 ```
