@@ -4,39 +4,16 @@ Training script for Super Mario Bros using PPO (Proximal Policy Optimization)
 import gym
 import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
-from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage
 from stable_baselines3.common.callbacks import CheckpointCallback
 import os
 
-# Import the wrappers from game.py
-from game import FrameSkipWrapper, CustomRewardWrapper
+# Import the env factory from game.py
+from game import make_mario_env
 
 # Monkey patch for JoypadSpace compatibility
 JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
-
-
-def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4):
-    def _init():
-        env = gym.make(
-            "SuperMarioBros-v0",
-            render_mode=render_mode,
-            apply_api_compatibility=True,
-        )
-        env = JoypadSpace(env, SIMPLE_MOVEMENT)
-
-        # Apply frame skip wrapper to hold actions for multiple frames
-        if frame_skip > 1:
-            env = FrameSkipWrapper(env, skip=frame_skip)
-
-        # Apply custom reward wrapper if enabled
-        if use_custom_reward:
-            env = CustomRewardWrapper(env)
-
-        return env
-    return _init
-
 
 if __name__ == "__main__":
     # Configuration

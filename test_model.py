@@ -4,38 +4,16 @@ Test a trained Super Mario Bros model and watch it play
 import gym
 import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
-from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
 from stable_baselines3 import PPO
 import numpy as np
 import cv2
 import time
 
 # Import the wrappers from game.py
-from game import FrameSkipWrapper, CustomRewardWrapper
+from game import make_mario_env
 
 # Monkey patch for JoypadSpace compatibility
 JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
-
-
-def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4):
-    """Create a Super Mario Bros environment with wrappers"""
-    env = gym.make(
-        "SuperMarioBros-v0",
-        render_mode=render_mode,
-        apply_api_compatibility=True,
-    )
-    env = JoypadSpace(env, SIMPLE_MOVEMENT)
-
-    # Apply frame skip wrapper to hold actions for multiple frames
-    if frame_skip > 1:
-        env = FrameSkipWrapper(env, skip=frame_skip)
-
-    # Apply custom reward wrapper if enabled
-    if use_custom_reward:
-        env = CustomRewardWrapper(env)
-
-    return env
-
 
 def safe_reset(env):
     """Handle both gym and gymnasium reset formats"""
@@ -92,7 +70,8 @@ if __name__ == "__main__":
     # Create environment (use "human" render mode for direct rendering)
     print("Creating environment...")
     # Note: We'll use rgb_array mode and manually render with cv2
-    env = make_mario_env(render_mode="rgb_array", frame_skip=4)
+    env_func = make_mario_env(render_mode="rgb_array", frame_skip=4)
+    env = env_func()
 
     print("\nStarting evaluation...")
     print("Press ESC to quit\n")
