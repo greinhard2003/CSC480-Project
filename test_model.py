@@ -8,6 +8,7 @@ from stable_baselines3 import PPO
 import numpy as np
 import cv2
 import time
+from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
 
 # Import the wrappers from game.py
 from game import make_mario_env
@@ -71,7 +72,10 @@ if __name__ == "__main__":
     print("Creating environment...")
     # Note: We'll use rgb_array mode and manually render with cv2
     env_func = make_mario_env(render_mode="rgb_array", frame_skip=4)
-    env = env_func()
+    env = DummyVecEnv([env_func])
+    env = VecFrameStack(env, n_stack=4)
+
+    display_env = make_mario_env(render_mode="rgb_array", frame_skip=4, gray=False, resize=False)()
 
     print("\nStarting evaluation...")
     print("Press ESC to quit\n")
@@ -93,6 +97,7 @@ if __name__ == "__main__":
     try:
         while episode < total_episodes:
             obs = safe_reset(env)
+            display_obs = safe_reset(display_env)
             done = False
             episode_reward = 0
             step_count = 0
@@ -134,12 +139,17 @@ if __name__ == "__main__":
                 action_counts[action] = action_counts.get(action, 0) + 1
 
                 # Step the environment
-                obs, reward, done, info = safe_step(env, action)
+                obs, rewards, dones, infos = safe_step(env, [action])
+                reward = rewards[0]
+                done = dones[0]
+                info = infos[0]
                 episode_reward += reward
                 step_count += 1
 
+                display_obs, _, _, _ = safe_step(display_env, action)
+
                 # Use observation as the frame (it's already in HWC format: 240x256x3)
-                frame = obs.copy()
+                frame = display_obs.copy()
 
                 # Ensure frame is uint8 (should already be from observation space)
                 if frame.dtype != np.uint8:
@@ -156,14 +166,18 @@ if __name__ == "__main__":
 
                 # Add info overlay
                 x_pos = info.get('x_pos', 0)
-                cv2.putText(frame, f"Episode: {episode}", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(frame, f"Reward: {episode_reward:.1f}", (10, 60),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(frame, f"X Position: {x_pos}", (10, 90),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(frame, f"Steps: {step_count}", (10, 120),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                padding_top = 100  # space from top
+                line_height = 30  # vertical spacing between lines
+
+                cv2.putText(frame, f"Episode: {episode}", (10, padding_top),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(frame, f"Reward: {episode_reward:.1f}", (10, padding_top + line_height),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(frame, f"X Position: {x_pos}", (10, padding_top + 2*line_height),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(frame, f"Steps: {step_count}", (10, padding_top + 3*line_height),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
 
                 cv2.imshow("Trained Mario Agent", frame)
 

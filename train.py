@@ -5,9 +5,10 @@ import gym
 import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage, VecFrameStack
 from stable_baselines3.common.callbacks import CheckpointCallback
 import os
+import sys
 
 # Import the env factory from game.py
 from game import make_mario_env
@@ -17,9 +18,9 @@ JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
 
 if __name__ == "__main__":
     # Configuration
-    NUM_ENV = 8  # Number of parallel environments
-    TOTAL_TIMESTEPS = 1_000_000  # Total training steps (increase for better results)
-    SAVE_FREQ = 10_000  # Save model every N steps
+    NUM_ENV = 16  # Number of parallel environments
+    TOTAL_TIMESTEPS = 6_000_000  # Total training steps (increase for better results)
+    SAVE_FREQ = 50_000  # Save model every N steps
     MODEL_DIR = "./models"  # Directory to save models
     LOG_DIR = "./logs"  # Directory for tensorboard logs
 
@@ -56,6 +57,8 @@ if __name__ == "__main__":
     # REMOVED VecTransposeImage - it was breaking training!
     # vec_env = VecTransposeImage(vec_env)
 
+    vec_env = VecFrameStack(vec_env, n_stack=4)
+
     # Create checkpoint callback to save models during training
     checkpoint_callback = CheckpointCallback(
         save_freq=SAVE_FREQ // NUM_ENV,  # Divide by NUM_ENV because it counts per environment
@@ -80,10 +83,29 @@ if __name__ == "__main__":
         gamma=0.99,  # Discount factor
         gae_lambda=0.95,  # GAE lambda parameter
         clip_range=0.2,  # PPO clipping parameter
-        ent_coef=0.01,  # FIXED: Standard exploration (0.05 was too high!)
+        ent_coef=0.03,  # FIXED: Standard exploration (0.05 was too high!)
         vf_coef=0.5,  # Value function coefficient
         max_grad_norm=0.5,  # Gradient clipping for stability
     )
+    
+    if len(sys.argv) > 1:
+        model_path = sys.argv[1]
+        try:
+            # Load the trained model
+            model.set_parameters(model_path, exact_match=True, device="auto")
+            print("Model loaded successfully!")
+
+        except FileNotFoundError:
+            print(f"\nERROR: Model not found at {model_path}")
+            print("\nAvailable models:")
+            import os
+            if os.path.exists("./models"):
+                models = [f for f in os.listdir("./models") if f.endswith(".zip")]
+                for m in models:
+                    print(f"  - ./models/{m}")
+            else:
+                print("  No models directory found. Train a model first with: python train.py")
+            sys.exit(1)
 
     print("\nStarting training...")
     print("You can monitor progress with: tensorboard --logdir ./logs")

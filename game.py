@@ -1,8 +1,9 @@
 import time
 import gym
+from gym.wrappers import GrayScaleObservation, ResizeObservation
 import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
-from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
+from gym_super_mario_bros.actions import SIMPLE_MOVEMENT, RIGHT_ONLY
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage
 import numpy as np
 import cv2
@@ -56,9 +57,10 @@ class CustomRewardWrapper(gym.Wrapper):
         self.prev_x_pos = None 
         self.prev_time = None
         self.max_x = 0
+        self.prev_life = None
 
     def reset(self, **kwargs):
-        obs = self.env.reset(**kwargs)
+        obs = self.env. reset(**kwargs)
         self.prev_x_pos = None
         self.prev_time = None
         self.max_x = 0
@@ -80,12 +82,13 @@ class CustomRewardWrapper(gym.Wrapper):
         # extract info from the environment
         x_pos = info.get('x_pos', 0)
         time_left = info.get('time', 400)
-
+        life = info.get('life', 0)
         # initialize on first step
         if self.prev_x_pos is None:
             self.prev_x_pos = x_pos
             self.prev_time = time_left
             self.max_x = x_pos
+            self.prev_life = life
 
         # basic reward function
         # focus on forward progress
@@ -95,38 +98,50 @@ class CustomRewardWrapper(gym.Wrapper):
         x_progress = x_pos - self.prev_x_pos
         custom_reward += x_progress * 0.025  # 0.1 / 4 for frame_skip=4
 
+        # Punish for getting stuck
+        if x_progress <= 0:
+            custom_reward -= 0.05
+        
         # reward reaching new maximum x position
         if x_pos > self.max_x:
             custom_reward += (x_pos - self.max_x) * 0.05
             self.max_x = x_pos
 
         # death penalty
-        if done and x_pos < 3161:
-            custom_reward -= 10.0
+        if life < self.prev_life and not info.get("flag_get", False):
+            custom_reward -= 50.0
 
         # large reward for completing level
-        if done and x_pos >= 3161:
-            custom_reward += 100.0
-
+        if info.get("flag_get", False):
+            custom_reward += 300.0
+        
         # time penalty to encourage speed
         time_penalty = self.prev_time - time_left
-        if time_penalty > 1:  # More than 1 second passed
-            custom_reward -= 0.01
+        if time_penalty >= 1:  # More than 1 second passed
+            custom_reward -= 0.1
 
+        custom_reward *= 0.01
+
+        self.prev_life = life
         self.prev_x_pos = x_pos
         self.prev_time = time_left
 
         return obs, custom_reward, terminated, truncated, info
 
 
-def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4):
+def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4, gray=True, resize=True):
     def _init():
         env = gym.make(
             "SuperMarioBros-v0",
             render_mode=render_mode,
             apply_api_compatibility=True,
         )
-        env = JoypadSpace(env, SIMPLE_MOVEMENT)
+        env = JoypadSpace(env, RIGHT_ONLY)
+
+        if gray:
+            env = GrayScaleObservation(env, keep_dim=True)
+        if resize:
+            env = ResizeObservation(env, shape=84)
 
         # Apply frame skip wrapper to hold actions for multiple frames
         if frame_skip > 1:
