@@ -1,6 +1,7 @@
 """
 Test a trained Super Mario Bros model and watch it play
 """
+import imageio
 import gym
 import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
@@ -11,10 +12,13 @@ import time
 from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
 
 # Import the wrappers from game.py
-from game import make_mario_env
+from game import make_mario_env, make_mario_level_env
 
 # Monkey patch for JoypadSpace compatibility
 JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
+
+VIDEO_PATH = "mario_eval.mp4"
+recorded_frames = []
 
 def safe_reset(env):
     """Handle both gym and gymnasium reset formats"""
@@ -70,32 +74,47 @@ if __name__ == "__main__":
 
     # Create environment (use "human" render mode for direct rendering)
     print("Creating environment...")
-    # Note: We'll use rgb_array mode and manually render with cv2
-    env_func = make_mario_env(render_mode="rgb_array", frame_skip=4)
-    env = DummyVecEnv([env_func])
-    env = VecFrameStack(env, n_stack=4)
 
-    display_env = make_mario_env(render_mode="rgb_array", frame_skip=4, gray=False, resize=False)()
+    levels = [
+        "SuperMarioBros-1-1-v0",
+        "SuperMarioBros-1-2-v0",
+        "SuperMarioBros-1-3-v0",
+        "SuperMarioBros-1-4-v0",
+    ] * 1
+
+    envs = [
+        DummyVecEnv([make_mario_level_env(level)])  # returns a function for each level
+        for level in levels
+    ]
+    envs = [VecFrameStack(env, n_stack=4) for env in envs]  # stack frames for model
+
+    # Display environments (raw RGB for OpenCV)
+    display_envs = [make_mario_level_env(level, gray=False, resize=False)() for level in levels]
+
+
+    # Note: We'll use rgb_array mode and manually render with cv2
+    # env_func = make_mario_env(render_mode="rgb_array", frame_skip=4)
+    # env = DummyVecEnv([env_func])
+    # env = VecFrameStack(env, n_stack=4)
+
+    # display_env = make_mario_env(render_mode="rgb_array", frame_skip=4, gray=False, resize=False)()
 
     print("\nStarting evaluation...")
     print("Press ESC to quit\n")
     print("="*60)
-    print(f"Observation space: {env.observation_space}")
-    print(f"Action space: {env.action_space}")
+    print(f"Observation space: {envs[0].observation_space}")
+    print(f"Action space: {envs[0].action_space}")
     print("="*60)
 
-    FPS = 60.0
+    FPS = 60
     frame_dt = 1.0 / FPS
-
-    episode = 0
-    total_episodes = 5  # Number of episodes to run
 
     # Track stats across all episodes
     all_action_counts = {}
     episode_stats = []
-
+    stop_all = False
     try:
-        while episode < total_episodes:
+        for i, (env, display_env) in enumerate(zip(envs, display_envs), start=1):
             obs = safe_reset(env)
             display_obs = safe_reset(display_env)
             done = False
@@ -103,17 +122,17 @@ if __name__ == "__main__":
             step_count = 0
             info = {}  # Initialize info dict
 
-            episode += 1
-            print(f"\nEpisode {episode}/{total_episodes}")
+            print(f"\n=== Level {levels[i-1]} ===")
 
             # Debug: print observation shape on first episode
-            if episode == 1:
+            if i == 1:
                 print(f"Debug - Raw obs shape: {obs.shape}")
 
             # Track action distribution for this episode
             action_counts = {}
 
             while not done:
+                last_frame_time = time.time()
                 # Transpose to CHW format to match training (SB3 auto-adds VecTransposeImage)
                 if len(obs.shape) == 3 and obs.shape[2] == 3:  # HWC format
                     obs_for_model = obs.transpose(2, 0, 1)  # Convert to CHW
@@ -121,7 +140,7 @@ if __name__ == "__main__":
                     obs_for_model = obs
 
                 # Debug: validate observations on first step
-                if episode == 1 and step_count == 0:
+                if i == 1 and step_count == 0:
                     print(f"Debug - obs shape: {obs.shape} -> transposed: {obs_for_model.shape}")
                     print(f"Debug - obs range: [{obs.min()}, {obs.max()}], std: {obs.std():.1f}")
                     print(f"Debug - obs IS varying: {obs.std() > 10} (should be True)")
@@ -143,6 +162,7 @@ if __name__ == "__main__":
                 reward = rewards[0]
                 done = dones[0]
                 info = infos[0]
+                # print(reward)
                 episode_reward += reward
                 step_count += 1
 
@@ -169,7 +189,7 @@ if __name__ == "__main__":
                 padding_top = 100  # space from top
                 line_height = 30  # vertical spacing between lines
 
-                cv2.putText(frame, f"Episode: {episode}", (10, padding_top),
+                cv2.putText(frame, f"Episode: {i}", (10, padding_top),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 cv2.putText(frame, f"Reward: {episode_reward:.1f}", (10, padding_top + line_height),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
@@ -178,18 +198,33 @@ if __name__ == "__main__":
                 cv2.putText(frame, f"Steps: {step_count}", (10, padding_top + 3*line_height),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
+                # Save frame for video (convert back to RGB for imageio)
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                recorded_frames.append(rgb_frame)
+
 
                 cv2.imshow("Trained Mario Agent", frame)
+
+                # ---- REAL FPS LIMITER ----
+                elapsed = time.time() - last_frame_time
+                sleep_time = frame_dt - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                last_frame_time = time.time()
+                # --------------------------
 
                 # FPS limiting
                 if cv2.waitKey(int(frame_dt * 1000)) & 0xFF == 27:
                     print("\n\nStopped by user (ESC pressed)")
                     done = True
-                    episode = total_episodes  # Exit outer loop too
-
+                    stop_all = True
+                    break  # Exit outer loop too
+            
+            if stop_all:
+                break
             # Save episode stats
             episode_stats.append({
-                'episode': episode,
+                'level': i,
                 'reward': episode_reward,
                 'steps': step_count,
                 'final_x': info.get('x_pos', 0),
@@ -211,7 +246,10 @@ if __name__ == "__main__":
         print("\n\nStopped by user (Ctrl+C)")
 
     finally:
-        env.close()
+        for env in envs:
+            env.close()
+        for display_env in display_envs:
+            display_env.close()
         cv2.destroyAllWindows()
 
         # Print summary
@@ -241,3 +279,8 @@ if __name__ == "__main__":
 
         print("\nEnvironment closed.")
         print("="*60)
+
+        if recorded_frames:
+            print(f"\nSaving video to {VIDEO_PATH} ...")
+            imageio.mimsave(VIDEO_PATH, recorded_frames, fps=60)
+            print("Video saved!")

@@ -45,6 +45,7 @@ python train.py
 ```
 This will:
 - Train for 1,000,000 timesteps (adjust `TOTAL_TIMESTEPS` in the script)
+- Train from a list of levels (adjust `levels` in the script)
 - Save checkpoints every 50,000 steps to `./models/`
 - Save final model as `mario_ppo_final.zip`
 - Can take several hours depending on your hardware

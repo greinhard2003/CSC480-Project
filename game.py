@@ -29,6 +29,7 @@ class FrameSkipWrapper(gym.Wrapper):
         terminated = False
         truncated = False
         info = {}
+        flag = False
 
         for _ in range(self.skip):
             step_result = self.env.step(action)
@@ -44,10 +45,11 @@ class FrameSkipWrapper(gym.Wrapper):
                 raise ValueError(f"Unexpected step result format with {len(step_result)} values")
 
             total_reward += reward
-
+            if info.get("flag_get", False):
+                flag = True
             if done:
                 break
-
+        info['flag_get'] = flag
         return obs, total_reward, terminated, truncated, info
 
 
@@ -58,6 +60,9 @@ class CustomRewardWrapper(gym.Wrapper):
         self.prev_time = None
         self.max_x = 0
         self.prev_life = None
+        self.stuck_sec = 0
+        self.max_stuck = 30
+        self.prev_y_pos = None
 
     def reset(self, **kwargs):
         obs = self.env. reset(**kwargs)
@@ -81,6 +86,7 @@ class CustomRewardWrapper(gym.Wrapper):
 
         # extract info from the environment
         x_pos = info.get('x_pos', 0)
+        y_pos = info.get('y_pos', 0)
         time_left = info.get('time', 400)
         life = info.get('life', 0)
         # initialize on first step
@@ -89,6 +95,8 @@ class CustomRewardWrapper(gym.Wrapper):
             self.prev_time = time_left
             self.max_x = x_pos
             self.prev_life = life
+            self.stuck_sec = 0
+            self.prev_y_pos = y_pos
 
         # basic reward function
         # focus on forward progress
@@ -96,20 +104,33 @@ class CustomRewardWrapper(gym.Wrapper):
 
         # reward forward progress
         x_progress = x_pos - self.prev_x_pos
-        custom_reward += x_progress * 0.025  # 0.1 / 4 for frame_skip=4
+        custom_reward += x_progress * 0.25  # 0.1 / 4 for frame_skip=4
 
         # Punish for getting stuck
-        if x_progress <= 0:
-            custom_reward -= 0.05
+        if x_progress == 0:
+            custom_reward -= 1
+            if self.prev_time - time_left >= 1:
+                self.stuck_sec += 1
+            if self.stuck_sec >= self.max_stuck:
+                truncated = True
+                custom_reward -= 50.0
+        else:
+            self.stuck_sec = 0
         
         # reward reaching new maximum x position
         if x_pos > self.max_x:
-            custom_reward += (x_pos - self.max_x) * 0.05
+            custom_reward += (x_pos - self.max_x) * 0.5
             self.max_x = x_pos
 
+        if (info.get('stage', 1) == 3 and info.get('world', 1) == 1):
+            custom_reward += 0.1 * max(0, y_pos - self.prev_y_pos)
+
         # death penalty
-        if life < self.prev_life and not info.get("flag_get", False):
-            custom_reward -= 50.0
+        if (life < self.prev_life or done) and not info.get("flag_get", False):
+            if self.prev_y_pos < 20:
+                custom_reward -= 200
+            else:
+                custom_reward -= 50.0
 
         # large reward for completing level
         if info.get("flag_get", False):
@@ -118,13 +139,14 @@ class CustomRewardWrapper(gym.Wrapper):
         # time penalty to encourage speed
         time_penalty = self.prev_time - time_left
         if time_penalty >= 1:  # More than 1 second passed
-            custom_reward -= 0.1
+            custom_reward -= 1
 
-        custom_reward *= 0.01
+        custom_reward *= 0.1
 
         self.prev_life = life
         self.prev_x_pos = x_pos
         self.prev_time = time_left
+        self.prev_y_pos = y_pos
 
         return obs, custom_reward, terminated, truncated, info
 
@@ -132,11 +154,11 @@ class CustomRewardWrapper(gym.Wrapper):
 def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4, gray=True, resize=True):
     def _init():
         env = gym.make(
-            "SuperMarioBros-v0",
+            'SuperMarioBros-v0',
             render_mode=render_mode,
             apply_api_compatibility=True,
         )
-        env = JoypadSpace(env, RIGHT_ONLY)
+        env = JoypadSpace(env, SIMPLE_MOVEMENT)
 
         if gray:
             env = GrayScaleObservation(env, keep_dim=True)
@@ -154,6 +176,54 @@ def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4
         return env
     return _init
 
+def make_mario_level_env(level, render_mode="rgb_array", use_custom_reward=True, frame_skip=4, gray=True, resize=True):
+    def _init():
+        env = gym.make(
+            level,
+            render_mode=render_mode,
+            apply_api_compatibility=True,
+        )
+        env = JoypadSpace(env, SIMPLE_MOVEMENT)
+
+        if gray:
+            env = GrayScaleObservation(env, keep_dim=True)
+        if resize:
+            env = ResizeObservation(env, shape=84)
+
+        # Apply frame skip wrapper to hold actions for multiple frames
+        if frame_skip > 1:
+            env = FrameSkipWrapper(env, skip=frame_skip)
+
+        # Apply custom reward wrapper if enabled
+        if use_custom_reward:
+            env = CustomRewardWrapper(env)
+        return env
+    return _init
+
+def make_eval_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4, gray=True, resize=True):
+    def _init():
+        env = gym.make(
+            'SuperMarioBros-v0',
+            render_mode=render_mode,
+            apply_api_compatibility=True,
+        )
+        env = JoypadSpace(env, SIMPLE_MOVEMENT)
+
+        if gray:
+            env = GrayScaleObservation(env, keep_dim=True)
+        if resize:
+            env = ResizeObservation(env, shape=84)
+
+        # Apply frame skip wrapper to hold actions for multiple frames
+        if frame_skip > 1:
+            env = FrameSkipWrapper(env, skip=frame_skip)
+
+        # Apply custom reward wrapper if enabled
+        if use_custom_reward:
+            env = CustomRewardWrapper(env)
+
+        return env
+    return _init
 
 # Helper to stack frames in grid for rendering
 def stack_frames_grid(obs, rows, cols):

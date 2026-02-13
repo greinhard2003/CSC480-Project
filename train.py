@@ -5,13 +5,14 @@ import gym
 import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage, VecFrameStack
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage, VecFrameStack, DummyVecEnv
+from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback, CallbackList
 import os
 import sys
 
 # Import the env factory from game.py
-from game import make_mario_env
+from MultiEvalCallback import MultiLevelEvalCallback
+from game import make_mario_env, make_mario_level_env
 
 # Monkey patch for JoypadSpace compatibility
 JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
@@ -19,7 +20,7 @@ JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
 if __name__ == "__main__":
     # Configuration
     NUM_ENV = 16  # Number of parallel environments
-    TOTAL_TIMESTEPS = 6_000_000  # Total training steps (increase for better results)
+    TOTAL_TIMESTEPS = 15_000_000  # Total training steps (increase for better results)
     SAVE_FREQ = 50_000  # Save model every N steps
     MODEL_DIR = "./models"  # Directory to save models
     LOG_DIR = "./logs"  # Directory for tensorboard logs
@@ -50,9 +51,18 @@ if __name__ == "__main__":
     print(f"  Logs will be saved to: {LOG_DIR}")
     print("="*60)
 
+    levels = [
+        "SuperMarioBros-1-1-v0",
+        "SuperMarioBros-1-2-v0"] * 6 + [
+        # "SuperMarioBros-1-1-v0",
+        # "SuperMarioBros-1-2-v0",
+        "SuperMarioBros-1-3-v0",
+        "SuperMarioBros-1-4-v0",
+    ] * 2
+
     # Create vectorized environment
     print("\nCreating vectorized environment...")
-    env_fns = [make_mario_env(frame_skip=FRAME_SKIP, use_custom_reward=USE_CUSTOM_REWARD) for _ in range(NUM_ENV)]
+    env_fns = [make_mario_level_env(level=levels[i%len(levels)], frame_skip=FRAME_SKIP, use_custom_reward=USE_CUSTOM_REWARD) for i in range(NUM_ENV)]
     vec_env = SubprocVecEnv(env_fns)
     # REMOVED VecTransposeImage - it was breaking training!
     # vec_env = VecTransposeImage(vec_env)
@@ -68,6 +78,17 @@ if __name__ == "__main__":
         save_vecnormalize=True,
     )
 
+    eval_env = DummyVecEnv([
+        make_mario_level_env(level,
+                            frame_skip=FRAME_SKIP,
+                            use_custom_reward=USE_CUSTOM_REWARD)
+        for level in levels
+    ])
+
+    eval_env = VecFrameStack(eval_env, n_stack=4)
+
+    n_steps = 2048
+
     # Create PPO model
     print("\nCreating PPO model...")
     model = PPO(
@@ -76,16 +97,17 @@ if __name__ == "__main__":
         verbose=1,  # Print training progress
         tensorboard_log=LOG_DIR,
         device="auto",  # "auto", "cuda", or "cpu" - auto detects GPU
-        learning_rate=2.5e-4,  # FIXED: Standard rate for PPO
-        n_steps=2048,  # Steps to collect before updating
+        learning_rate=1e-4,  # FIXED: Standard rate for PPO
+        n_steps=n_steps,  # Steps to collect before updating
         batch_size=256,  # FIXED: Smaller for more stable updates
         n_epochs=10,  # FIXED: More epochs for better learning
         gamma=0.99,  # Discount factor
         gae_lambda=0.95,  # GAE lambda parameter
         clip_range=0.2,  # PPO clipping parameter
-        ent_coef=0.03,  # FIXED: Standard exploration (0.05 was too high!)
+        ent_coef=0.02,  # FIXED: Standard exploration (0.05 was too high!)
         vf_coef=0.5,  # Value function coefficient
         max_grad_norm=0.5,  # Gradient clipping for stability
+        target_kl=0.05
     )
     
     if len(sys.argv) > 1:
@@ -107,6 +129,25 @@ if __name__ == "__main__":
                 print("  No models directory found. Train a model first with: python train.py")
             sys.exit(1)
 
+    eval_levels = [
+        "SuperMarioBros-1-1-v0",
+        "SuperMarioBros-1-2-v0",
+        "SuperMarioBros-1-3-v0",
+        "SuperMarioBros-1-4-v0",
+    ]
+
+    eval_callback = MultiLevelEvalCallback(
+        model=model,
+        levels=eval_levels,
+        n_eval_episodes=3,
+        best_model_save_path="./best_model",
+        eval_freq=2048,
+        verbose=1
+    )
+    
+    callback = CallbackList([eval_callback, checkpoint_callback])
+
+
     print("\nStarting training...")
     print("You can monitor progress with: tensorboard --logdir ./logs")
     print("Press Ctrl+C to stop training early\n")
@@ -115,8 +156,9 @@ if __name__ == "__main__":
         # Train the model
         model.learn(
             total_timesteps=TOTAL_TIMESTEPS,
-            callback=checkpoint_callback,
+            callback=callback,
             progress_bar=True,
+            reset_num_timesteps=False
         )
 
         # Save the final model
