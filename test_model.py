@@ -77,9 +77,6 @@ if __name__ == "__main__":
 
     levels = [
         "SuperMarioBros-1-1-v0",
-        "SuperMarioBros-1-2-v0",
-        "SuperMarioBros-1-3-v0",
-        "SuperMarioBros-1-4-v0",
     ] * 1
 
     envs = [

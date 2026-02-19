@@ -176,7 +176,7 @@ def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4
         return env
     return _init
 
-def make_mario_level_env(level, render_mode="rgb_array", use_custom_reward=True, frame_skip=4, gray=True, resize=True):
+def make_mario_level_env(level, render_mode="rgb_array", use_custom_reward=True, frame_skip=4, gray=True, resize=True, action_repeat_prob=0.02):
     def _init():
         env = gym.make(
             level,
@@ -184,6 +184,9 @@ def make_mario_level_env(level, render_mode="rgb_array", use_custom_reward=True,
             apply_api_compatibility=True,
         )
         env = JoypadSpace(env, SIMPLE_MOVEMENT)
+
+        if action_repeat_prob > 0:
+            env = ActionRepeatWrapper(env, p=action_repeat_prob)
 
         if gray:
             env = GrayScaleObservation(env, keep_dim=True)
@@ -245,6 +248,32 @@ def stack_frames_grid(obs, rows, cols):
             row_frames += [np.zeros_like(frames[0])]*(cols - len(row_frames))
         grid_rows.append(np.hstack(row_frames))
     return np.vstack(grid_rows)
+
+import gym
+import numpy as np
+
+class ActionRepeatWrapper(gym.Wrapper):
+    """
+    Sticky Keys wrapper
+    """
+    def __init__(self, env, p=0.02, seed=None):
+        super().__init__(env)
+        self.p = float(p)
+        self.prev_action = None
+        self.rng = np.random.default_rng(seed)
+
+    def reset(self, **kwargs):
+        out = self.env.reset(**kwargs)
+        self.prev_action = None
+        return out
+
+    def step(self, action):
+        # action for JoypadSpace is typically an int
+        if self.prev_action is not None and self.rng.random() < self.p:
+            action = self.prev_action
+        self.prev_action = action
+        return self.env.step(action)
+
 
 if __name__ == "__main__":
     # Print the mapping so you know which index equals which button combo

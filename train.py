@@ -30,6 +30,7 @@ if __name__ == "__main__":
     USE_CUSTOM_REWARD = True  # Set to False to speed up if custom reward is slow
 
     # Create directories
+    # Create directories
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -51,18 +52,16 @@ if __name__ == "__main__":
     print(f"  Logs will be saved to: {LOG_DIR}")
     print("="*60)
 
-    levels = [
-        "SuperMarioBros-1-1-v0",
-        "SuperMarioBros-1-2-v0"] * 6 + [
-        # "SuperMarioBros-1-1-v0",
-        # "SuperMarioBros-1-2-v0",
-        "SuperMarioBros-1-3-v0",
-        "SuperMarioBros-1-4-v0",
-    ] * 2
+    levels = ["SuperMarioBros-1-1-v0"]
 
     # Create vectorized environment
     print("\nCreating vectorized environment...")
-    env_fns = [make_mario_level_env(level=levels[i%len(levels)], frame_skip=FRAME_SKIP, use_custom_reward=USE_CUSTOM_REWARD) for i in range(NUM_ENV)]
+    env_fns = [make_mario_level_env(
+        level=levels[i % len(levels)],
+        frame_skip=FRAME_SKIP,
+        use_custom_reward=USE_CUSTOM_REWARD,
+        action_repeat_prob=0.02,  # 2% action repeat during training
+    ) for i in range(NUM_ENV)]
     vec_env = SubprocVecEnv(env_fns)
     # REMOVED VecTransposeImage - it was breaking training!
     # vec_env = VecTransposeImage(vec_env)
@@ -78,13 +77,12 @@ if __name__ == "__main__":
         save_vecnormalize=True,
     )
 
-    eval_env = DummyVecEnv([
-        make_mario_level_env(level,
-                            frame_skip=FRAME_SKIP,
-                            use_custom_reward=USE_CUSTOM_REWARD)
-        for level in levels
-    ])
-
+    eval_env = DummyVecEnv([make_mario_level_env(
+        level="SuperMarioBros-1-1-v0",
+        frame_skip=FRAME_SKIP,
+        use_custom_reward=USE_CUSTOM_REWARD,
+        action_repeat_prob=0.0,
+    )])
     eval_env = VecFrameStack(eval_env, n_stack=4)
 
     n_steps = 2048
@@ -130,10 +128,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
     eval_levels = [
-        "SuperMarioBros-1-1-v0",
-        "SuperMarioBros-1-2-v0",
-        "SuperMarioBros-1-3-v0",
-        "SuperMarioBros-1-4-v0",
+        "SuperMarioBros-1-1-v0"
     ]
 
     eval_callback = MultiLevelEvalCallback(
@@ -151,7 +146,6 @@ if __name__ == "__main__":
     print("\nStarting training...")
     print("You can monitor progress with: tensorboard --logdir ./logs")
     print("Press Ctrl+C to stop training early\n")
-
     try:
         # Train the model
         model.learn(
