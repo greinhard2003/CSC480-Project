@@ -9,10 +9,11 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage, V
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback, CallbackList
 import os
 import sys
+import random  # ADDED (for optional shuffle)
 
 # Import the env factory from game.py
 from MultiEvalCallback import MultiLevelEvalCallback
-from game import make_mario_env, make_mario_level_env
+from game import make_mario_env, make_mario_level_env  # <-- CHANGED: removed make_mario_multi_level_env
 
 # Monkey patch for JoypadSpace compatibility
 JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
@@ -20,8 +21,8 @@ JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
 if __name__ == "__main__":
     # Configuration
     NUM_ENV = 16  # Number of parallel environments
-    TOTAL_TIMESTEPS = 15_000_000  # Total training steps (increase for better results)
-    SAVE_FREQ = 50_000  # Save model every N steps
+    TOTAL_TIMESTEPS = 6_000_000  # Total training steps (increase for better results)
+    SAVE_FREQ = 200_000  # Save model every N steps
     MODEL_DIR = "./models"  # Directory to save models
     LOG_DIR = "./logs"  # Directory for tensorboard logs
 
@@ -51,23 +52,55 @@ if __name__ == "__main__":
     print(f"  Logs will be saved to: {LOG_DIR}")
     print("="*60)
 
-    levels = [
+    # =========================
+    # 50/50 level mix
+    # =========================
+    levels_w1 = [
         "SuperMarioBros-1-1-v0",
-        "SuperMarioBros-1-2-v0"] * 6 + [
-        # "SuperMarioBros-1-1-v0",
-        # "SuperMarioBros-1-2-v0",
+        "SuperMarioBros-1-2-v0",
         "SuperMarioBros-1-3-v0",
         "SuperMarioBros-1-4-v0",
-    ] * 2
+    ]
+
+    levels_w2 = [
+        "SuperMarioBros-2-1-v0",
+        "SuperMarioBros-2-2-v0",
+        "SuperMarioBros-2-3-v0",
+        "SuperMarioBros-2-4-v0",
+    ]
+
+    levels = levels_w1 + levels_w2  # 8 total levels
 
     # Create vectorized environment
     print("\nCreating vectorized environment...")
-    env_fns = [make_mario_level_env(level=levels[i%len(levels)], frame_skip=FRAME_SKIP, use_custom_reward=USE_CUSTOM_REWARD) for i in range(NUM_ENV)]
-    vec_env = SubprocVecEnv(env_fns)
-    # REMOVED VecTransposeImage - it was breaking training!
-    # vec_env = VecTransposeImage(vec_env)
 
+    # ============================================================
+    # NEW: Fixed assignment sampler (2 envs per level)
+    # - avoids uneven sampling and helps with plateaus/forgetting
+    # ============================================================
+    assert NUM_ENV % len(levels) == 0, (
+        f"NUM_ENV ({NUM_ENV}) must be a multiple of number of levels ({len(levels)})."
+    )
+    envs_per_level = NUM_ENV // len(levels)  # for 16 envs and 8 levels -> 2 each
+
+    env_fns = []
+    for level in levels:
+        for _ in range(envs_per_level):
+            env_fns.append(
+                make_mario_level_env(
+                    level=level,
+                    frame_skip=FRAME_SKIP,
+                    use_custom_reward=USE_CUSTOM_REWARD
+                )
+            )
+
+    # Optional: shuffle so workers aren't grouped by level in process order
+    random.shuffle(env_fns)
+
+    vec_env = SubprocVecEnv(env_fns)
     vec_env = VecFrameStack(vec_env, n_stack=4)
+    # Optional explicit transpose (SB3 often auto-wraps for CnnPolicy, but explicit is fine):
+    # vec_env = VecTransposeImage(vec_env)
 
     # Create checkpoint callback to save models during training
     checkpoint_callback = CheckpointCallback(
@@ -78,49 +111,50 @@ if __name__ == "__main__":
         save_vecnormalize=True,
     )
 
+    # Eval env (fixed one env per level)
     eval_env = DummyVecEnv([
-        make_mario_level_env(level,
-                            frame_skip=FRAME_SKIP,
-                            use_custom_reward=USE_CUSTOM_REWARD)
+        make_mario_level_env(
+            level,
+            frame_skip=FRAME_SKIP,
+            use_custom_reward=USE_CUSTOM_REWARD
+        )
         for level in levels
     ])
-
     eval_env = VecFrameStack(eval_env, n_stack=4)
+    # eval_env = VecTransposeImage(eval_env)
 
     n_steps = 2048
 
     # Create PPO model
     print("\nCreating PPO model...")
     model = PPO(
-        "CnnPolicy",  # CNN policy for image-based observations
+        "CnnPolicy",
         vec_env,
-        verbose=1,  # Print training progress
+        verbose=1,
         tensorboard_log=LOG_DIR,
-        device="auto",  # "auto", "cuda", or "cpu" - auto detects GPU
-        learning_rate=1e-4,  # FIXED: Standard rate for PPO
-        n_steps=n_steps,  # Steps to collect before updating
-        batch_size=256,  # FIXED: Smaller for more stable updates
-        n_epochs=10,  # FIXED: More epochs for better learning
-        gamma=0.99,  # Discount factor
-        gae_lambda=0.95,  # GAE lambda parameter
-        clip_range=0.2,  # PPO clipping parameter
-        ent_coef=0.02,  # FIXED: Standard exploration (0.05 was too high!)
-        vf_coef=0.5,  # Value function coefficient
-        max_grad_norm=0.5,  # Gradient clipping for stability
-        target_kl=0.05
+        device="auto",
+        learning_rate=1e-4,
+        n_steps=n_steps,
+        batch_size=256,
+        n_epochs=10,
+        gamma=0.99,
+        gae_lambda=0.95,
+        clip_range=0.2,
+        ent_coef=0.02,
+        vf_coef=0.5,
+        max_grad_norm=0.5,
+        target_kl=0.02
     )
-    
+
+    # Load baseline weights if provided
     if len(sys.argv) > 1:
         model_path = sys.argv[1]
         try:
-            # Load the trained model
             model.set_parameters(model_path, exact_match=True, device="auto")
             print("Model loaded successfully!")
-
         except FileNotFoundError:
             print(f"\nERROR: Model not found at {model_path}")
             print("\nAvailable models:")
-            import os
             if os.path.exists("./models"):
                 models = [f for f in os.listdir("./models") if f.endswith(".zip")]
                 for m in models:
@@ -134,6 +168,10 @@ if __name__ == "__main__":
         "SuperMarioBros-1-2-v0",
         "SuperMarioBros-1-3-v0",
         "SuperMarioBros-1-4-v0",
+        "SuperMarioBros-2-1-v0",
+        "SuperMarioBros-2-2-v0",
+        "SuperMarioBros-2-3-v0",
+        "SuperMarioBros-2-4-v0",
     ]
 
     eval_callback = MultiLevelEvalCallback(
@@ -144,16 +182,14 @@ if __name__ == "__main__":
         eval_freq=2048,
         verbose=1
     )
-    
-    callback = CallbackList([eval_callback, checkpoint_callback])
 
+    callback = CallbackList([eval_callback, checkpoint_callback])
 
     print("\nStarting training...")
     print("You can monitor progress with: tensorboard --logdir ./logs")
     print("Press Ctrl+C to stop training early\n")
 
     try:
-        # Train the model
         model.learn(
             total_timesteps=TOTAL_TIMESTEPS,
             callback=callback,
@@ -161,8 +197,7 @@ if __name__ == "__main__":
             reset_num_timesteps=False
         )
 
-        # Save the final model
-        final_model_path = f"{MODEL_DIR}/mario_ppo_final.zip"
+        final_model_path = f"{MODEL_DIR}/best_world2.zip"
         model.save(final_model_path)
         print(f"\n{'='*60}")
         print(f"Training completed!")

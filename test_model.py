@@ -80,6 +80,10 @@ if __name__ == "__main__":
         "SuperMarioBros-1-2-v0",
         "SuperMarioBros-1-3-v0",
         "SuperMarioBros-1-4-v0",
+        "SuperMarioBros-2-1-v0",
+        "SuperMarioBros-2-2-v0", 
+        "SuperMarioBros-2-3-v0", 
+        "SuperMarioBros-2-4-v0"
     ] * 1
 
     envs = [

@@ -7,6 +7,9 @@ from gym_super_mario_bros.actions import SIMPLE_MOVEMENT, RIGHT_ONLY
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage
 import numpy as np
 import cv2
+import random  # ADDED
+import warnings
+warnings.filterwarnings("ignore")
 
 # Source - https://stackoverflow.com/questions/76509663/typeerror-joypadspace-reset-got-an-unexpected-keyword-argument-seed-when-i
 # Posted by aaron
@@ -56,7 +59,7 @@ class FrameSkipWrapper(gym.Wrapper):
 class CustomRewardWrapper(gym.Wrapper):
     def __init__(self, env):
         super(CustomRewardWrapper, self).__init__(env)
-        self.prev_x_pos = None 
+        self.prev_x_pos = None
         self.prev_time = None
         self.max_x = 0
         self.prev_life = None
@@ -65,20 +68,30 @@ class CustomRewardWrapper(gym.Wrapper):
         self.prev_y_pos = None
 
     def reset(self, **kwargs):
-        obs = self.env. reset(**kwargs)
+        # FIXED: handle gymnasium-style (obs, info) tuples safely
+        out = self.env.reset(**kwargs)
+        if isinstance(out, tuple) and len(out) == 2:
+            obs, info = out
+        else:
+            obs, info = out, {}
+
         self.prev_x_pos = None
         self.prev_time = None
         self.max_x = 0
-        return obs
+        self.prev_life = None
+        self.stuck_sec = 0
+        self.prev_y_pos = None
+
+        return (obs, info) if isinstance(out, tuple) else obs
 
     def step(self, action):
         step_result = self.env.step(action)
 
-        if len(step_result) == 4: #gym format
+        if len(step_result) == 4:  # gym format
             obs, reward, done, info = step_result
             terminated = done
             truncated = False
-        elif len(step_result) == 5: #gymnasium format
+        elif len(step_result) == 5:  # gymnasium format
             obs, reward, terminated, truncated, info = step_result
             done = terminated or truncated
         else:
@@ -89,6 +102,7 @@ class CustomRewardWrapper(gym.Wrapper):
         y_pos = info.get('y_pos', 0)
         time_left = info.get('time', 400)
         life = info.get('life', 0)
+
         # initialize on first step
         if self.prev_x_pos is None:
             self.prev_x_pos = x_pos
@@ -99,7 +113,6 @@ class CustomRewardWrapper(gym.Wrapper):
             self.prev_y_pos = y_pos
 
         # basic reward function
-        # focus on forward progress
         custom_reward = 0.0
 
         # reward forward progress
@@ -116,7 +129,7 @@ class CustomRewardWrapper(gym.Wrapper):
                 custom_reward -= 50.0
         else:
             self.stuck_sec = 0
-        
+
         # reward reaching new maximum x position
         if x_pos > self.max_x:
             custom_reward += (x_pos - self.max_x) * 0.5
@@ -124,6 +137,11 @@ class CustomRewardWrapper(gym.Wrapper):
 
         if (info.get('stage', 1) == 3 and info.get('world', 1) == 1):
             custom_reward += 0.1 * max(0, y_pos - self.prev_y_pos)
+
+
+        if (info.get('stage', 1) == 2 and info.get('world', 1) == 2):
+            if self.prev_time - time_left >= 1:
+                custom_reward += 0.5
 
         # death penalty
         if (life < self.prev_life or done) and not info.get("flag_get", False):
@@ -135,10 +153,10 @@ class CustomRewardWrapper(gym.Wrapper):
         # large reward for completing level
         if info.get("flag_get", False):
             custom_reward += 300.0
-        
+
         # time penalty to encourage speed
         time_penalty = self.prev_time - time_left
-        if time_penalty >= 1:  # More than 1 second passed
+        if time_penalty >= 1:
             custom_reward -= 1
 
         custom_reward *= 0.1
@@ -149,6 +167,74 @@ class CustomRewardWrapper(gym.Wrapper):
         self.prev_y_pos = y_pos
 
         return obs, custom_reward, terminated, truncated, info
+
+
+# =========================
+# ADDED: random-per-episode multi-level switching
+# =========================
+class MultiLevelSwitchWrapper(gym.Wrapper):
+    """
+    On every reset(), closes the current env and recreates a new env with a randomly
+    selected level from `levels`. This gives random-per-episode sampling.
+    """
+    def __init__(self, build_env_fn, levels, seed=None):
+        self._build_env_fn = build_env_fn  # callable(level_name) -> env instance
+        self._levels = list(levels)
+        self._rng = random.Random(seed)
+        self.current_level = None
+
+        first_level = self._pick_level()
+        env = self._build_env_fn(first_level)
+        super().__init__(env)
+
+    def _pick_level(self):
+        self.current_level = self._rng.choice(self._levels)
+        return self.current_level
+
+    def reset(self, **kwargs):
+        try:
+            self.env.close()
+        except Exception:
+            pass
+
+        level = self._pick_level()
+        self.env = self._build_env_fn(level)
+        return self.env.reset(**kwargs)
+
+    def step(self, action):
+        return self.env.step(action)
+
+
+def make_mario_multi_level_env(levels, render_mode="rgb_array", use_custom_reward=True,
+                               frame_skip=4, gray=True, resize=True, seed=None):
+    """
+    Returns a thunk for SubprocVecEnv that samples a NEW random level each episode.
+    """
+    def _init():
+        def _build(level_name):
+            env = gym.make(
+                level_name,
+                render_mode=render_mode,
+                apply_api_compatibility=True,
+            )
+            env = JoypadSpace(env, SIMPLE_MOVEMENT)
+
+            if gray:
+                env = GrayScaleObservation(env, keep_dim=True)
+            if resize:
+                env = ResizeObservation(env, shape=84)
+
+            if frame_skip > 1:
+                env = FrameSkipWrapper(env, skip=frame_skip)
+
+            if use_custom_reward:
+                env = CustomRewardWrapper(env)
+
+            return env
+
+        return MultiLevelSwitchWrapper(_build, levels=levels, seed=seed)
+
+    return _init
 
 
 def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4, gray=True, resize=True):
@@ -176,6 +262,7 @@ def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4
         return env
     return _init
 
+
 def make_mario_level_env(level, render_mode="rgb_array", use_custom_reward=True, frame_skip=4, gray=True, resize=True):
     def _init():
         env = gym.make(
@@ -199,6 +286,7 @@ def make_mario_level_env(level, render_mode="rgb_array", use_custom_reward=True,
             env = CustomRewardWrapper(env)
         return env
     return _init
+
 
 def make_eval_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4, gray=True, resize=True):
     def _init():
@@ -225,6 +313,7 @@ def make_eval_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4,
         return env
     return _init
 
+
 # Helper to stack frames in grid for rendering
 def stack_frames_grid(obs, rows, cols):
     """
@@ -245,6 +334,7 @@ def stack_frames_grid(obs, rows, cols):
             row_frames += [np.zeros_like(frames[0])]*(cols - len(row_frames))
         grid_rows.append(np.hstack(row_frames))
     return np.vstack(grid_rows)
+
 
 if __name__ == "__main__":
     # Print the mapping so you know which index equals which button combo
@@ -284,40 +374,34 @@ if __name__ == "__main__":
     NUM_ENV = 4
 
     # Choose a deterministic action index to try moving right.
-    # If you printed the mapping above, set `ACTION_TO_TRY` to the index that corresponds to 'right' or 'right + A'.
-    ACTION_TO_TRY = 1   # change this if your mapping shows a different index for 'right'
+    ACTION_TO_TRY = 1
 
     if (vectorize):
-        render = True # Flag to render all environments
-        random = True # Flag to test if all environments are different
+        render = True
+        random_flag = True
 
-        env_fns = [make_mario_env() for _ in range (NUM_ENV)]
+        env_fns = [make_mario_env() for _ in range(NUM_ENV)]
         vec_env = SubprocVecEnv(env_fns)
         vec_env = VecTransposeImage(vec_env)
 
         obs = vec_env.reset()
-        done_flags = np.array([False]*NUM_ENV)
 
         try:
             while True:
-                # Step all envs
-                if (random):
+                if (random_flag):
                     actions = [vec_env.action_space.sample() for _ in range(NUM_ENV)]
                     obs, rewards, dones, infos = vec_env.step(actions)
                     for i, r in enumerate(rewards):
                         print(f"env {i}: reward = {r}")
-
                 else:
-                    actions = [ACTION_TO_TRY]*NUM_ENV
+                    actions = [ACTION_TO_TRY] * NUM_ENV
                     obs, reward, dones, infos = vec_env.step(actions)
 
                 if (render):
-                    # Stack frames into grid
                     stacked = stack_frames_grid(obs, rows=2, cols=2)
                     cv2.imshow("Multiple Mario Envs", stacked)
 
-                    # Break on ESC
-                    if cv2.waitKey(int(frame_dt*1000)) & 0xFF == 27:
+                    if cv2.waitKey(int(frame_dt * 1000)) & 0xFF == 27:
                         break
 
         except KeyboardInterrupt:
@@ -338,13 +422,11 @@ if __name__ == "__main__":
                 if done:
                     obs = safe_reset(env)
 
-                # use deterministic action instead of random sampling
                 action = ACTION_TO_TRY
                 obs, reward, done, info = safe_step(env, action)
 
                 env.render()
 
-                # accurate real-time limiting
                 t1 = time.time()
                 elapsed = t1 - t0
                 to_sleep = frame_dt - elapsed
