@@ -17,9 +17,9 @@ JoypadSpace.reset = lambda self, **kwargs: self.env.reset(**kwargs)
 
 if __name__ == "__main__":
     # Configuration
-    NUM_ENV = 8  # Number of parallel environments
-    TOTAL_TIMESTEPS = 1_000_000  # Total training steps (increase for better results)
-    SAVE_FREQ = 10_000  # Save model every N steps
+    NUM_ENV = os.cpu_count() - 2 # Number of parallel environments
+    TOTAL_TIMESTEPS = 15_000_000  # Total training steps (increase for better results)
+    SAVE_FREQ = 500_000  # Save model every N steps
     MODEL_DIR = "./models"  # Directory to save models
     LOG_DIR = "./logs"  # Directory for tensorboard logs
 
@@ -51,7 +51,7 @@ if __name__ == "__main__":
 
     # Create vectorized environment
     print("\nCreating vectorized environment...")
-    env_fns = [make_mario_env(frame_skip=FRAME_SKIP, use_custom_reward=USE_CUSTOM_REWARD) for _ in range(NUM_ENV)]
+    env_fns = [make_mario_env(frame_skip=FRAME_SKIP, use_custom_reward=USE_CUSTOM_REWARD, reward_mode="coins") for _ in range(NUM_ENV)]
     vec_env = SubprocVecEnv(env_fns)
     # REMOVED VecTransposeImage - it was breaking training!
     # vec_env = VecTransposeImage(vec_env)
@@ -72,7 +72,7 @@ if __name__ == "__main__":
         vec_env,
         verbose=1,  # Print training progress
         tensorboard_log=LOG_DIR,
-        device="auto",  # "auto", "cuda", or "cpu" - auto detects GPU
+        device="cuda",  # "auto", "cuda", or "cpu" - auto detects GPU
         learning_rate=2.5e-4,  # FIXED: Standard rate for PPO
         n_steps=2048,  # Steps to collect before updating
         batch_size=256,  # FIXED: Smaller for more stable updates

@@ -4,6 +4,7 @@ import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
 from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecTransposeImage
+from stable_baselines3.common.atari_wrappers import MaxAndSkipEnv
 import numpy as np
 import cv2
 
@@ -51,16 +52,19 @@ class FrameSkipWrapper(gym.Wrapper):
 
 
 class CustomRewardWrapper(gym.Wrapper):
-    def __init__(self, env):
+    def __init__(self, env, reward_mode="coins"):
         super(CustomRewardWrapper, self).__init__(env)
-        self.prev_x_pos = None 
+        self.reward_mode = reward_mode
+        self.prev_x_pos = None
         self.prev_time = None
+        self.prev_coins = None
         self.max_x = 0
 
     def reset(self, **kwargs):
         obs = self.env.reset(**kwargs)
         self.prev_x_pos = None
         self.prev_time = None
+        self.prev_coins = None
         self.max_x = 0
         return obs
 
@@ -80,46 +84,60 @@ class CustomRewardWrapper(gym.Wrapper):
         # extract info from the environment
         x_pos = info.get('x_pos', 0)
         time_left = info.get('time', 400)
+        coins = info.get('coins', 0)
 
-        # initialize on first step
+        # Initialize on first step
         if self.prev_x_pos is None:
             self.prev_x_pos = x_pos
             self.prev_time = time_left
+            self.prev_coins = coins
             self.max_x = x_pos
 
-        # basic reward function
-        # focus on forward progress
+        # Calculate deltas
+        x_progress = x_pos - self.prev_x_pos
+        delta_coins = coins - self.prev_coins
+        time_penalty = self.prev_time - time_left
+
         custom_reward = 0.0
 
-        # reward forward progress
-        x_progress = x_pos - self.prev_x_pos
-        custom_reward += x_progress * 0.025  # 0.1 / 4 for frame_skip=4
+        # reward function prioritizing speed
+        if self.reward_mode == "speed":
+            custom_reward += x_progress * 0.025
 
-        # reward reaching new maximum x position
-        if x_pos > self.max_x:
-            custom_reward += (x_pos - self.max_x) * 0.05
-            self.max_x = x_pos
+            if x_pos > self.max_x:
+                custom_reward += (x_pos - self.max_x) * 0.05
+                self.max_x = x_pos
 
-        # death penalty
-        if done and x_pos < 3161:
-            custom_reward -= 10.0
+            if done and x_pos < 3161:
+                custom_reward -= 10.0
 
-        # large reward for completing level
-        if done and x_pos >= 3161:
-            custom_reward += 100.0
+            if done and x_pos >= 3161:
+                custom_reward += 100.0
 
-        # time penalty to encourage speed
-        time_penalty = self.prev_time - time_left
-        if time_penalty > 1:  # More than 1 second passed
-            custom_reward -= 0.01
+            if time_penalty > 1:
+                custom_reward -= 0.01
+
+        #reward function prioritizing coins
+        elif self.reward_mode == "coins":
+            custom_reward += delta_coins * 5.0
+            custom_reward += x_progress * 0.005  # small exploration incentive
+
+            if done and x_pos >= 3161:
+                custom_reward += 100.0
+
+            elif done:
+                custom_reward -= 5.0
+
+        else:
+            raise ValueError(f"Unknown reward_mode: {self.reward_mode}")
 
         self.prev_x_pos = x_pos
         self.prev_time = time_left
+        self.prev_coins = coins
 
         return obs, custom_reward, terminated, truncated, info
 
-
-def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4):
+def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4, reward_mode="speed"):
     def _init():
         env = gym.make(
             "SuperMarioBros-v0",
@@ -134,7 +152,7 @@ def make_mario_env(render_mode="rgb_array", use_custom_reward=True, frame_skip=4
 
         # Apply custom reward wrapper if enabled
         if use_custom_reward:
-            env = CustomRewardWrapper(env)
+            env = CustomRewardWrapper(env, reward_mode=reward_mode)
 
         return env
     return _init
