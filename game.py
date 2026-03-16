@@ -63,12 +63,14 @@ class CustomRewardWrapper(gym.Wrapper):
         self.stuck_sec = 0
         self.max_stuck = 30
         self.prev_y_pos = None
+        self.prev_score = 0
 
     def reset(self, **kwargs):
         obs = self.env. reset(**kwargs)
         self.prev_x_pos = None
         self.prev_time = None
         self.max_x = 0
+        self.prev_score = 0
         return obs
 
     def step(self, action):
@@ -89,6 +91,7 @@ class CustomRewardWrapper(gym.Wrapper):
         y_pos = info.get('y_pos', 0)
         time_left = info.get('time', 400)
         life = info.get('life', 0)
+        score = info.get('score', 0)
         # initialize on first step
         if self.prev_x_pos is None:
             self.prev_x_pos = x_pos
@@ -97,6 +100,7 @@ class CustomRewardWrapper(gym.Wrapper):
             self.prev_life = life
             self.stuck_sec = 0
             self.prev_y_pos = y_pos
+            self.prev_score = 0
 
         # basic reward function
         # focus on forward progress
@@ -141,12 +145,18 @@ class CustomRewardWrapper(gym.Wrapper):
         if time_penalty >= 1:  # More than 1 second passed
             custom_reward -= 1
 
+        # give reward for getting a better score
+        score_delta = score - self.prev_score
+        if score_delta > 0:
+            custom_reward += score_delta * 0.5
+
         custom_reward *= 0.1
 
         self.prev_life = life
         self.prev_x_pos = x_pos
         self.prev_time = time_left
         self.prev_y_pos = y_pos
+        self.prev_score = score
 
         return obs, custom_reward, terminated, truncated, info
 
