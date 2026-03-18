@@ -46,6 +46,13 @@ pip install opencv-python
 # The above installs may update numpy, so run this after:
 pip install --force-reinstall "numpy<2.0"
 ```
+## Branch Structure
+
+- `main` - Coin-Based model
+- `trained_model_v1` - Right-Only base model that completes 1-1
+- `trained_model_world_1` - World 1 Completion Model
+- `trained_model_score` - Score-Based model (completes World 1)
+- `trained_model_world_2` - World 1+2 Model (completes World 1, 2-3, 2-4)
 
 ## Project Structure
 
