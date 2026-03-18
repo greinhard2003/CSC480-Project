@@ -24,7 +24,7 @@ This project uses the following external libraries and resources:
 
 ## Project Overview
 
-Train an AI agent to play Super Mario Bros using PPO (Proximal Policy Optimization) with customizable reward functions. The project includes two distinct reward strategies: one optimized for speed completion and another for coin collection.
+Train an AI agent to play Super Mario Bros using PPO (Proximal Policy Optimization) with customizable reward functions. The branch includes a reward strategy optimized for World 1 completion.
 
 ## Prerequisites
 
