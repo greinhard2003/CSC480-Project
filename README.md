@@ -1,6 +1,30 @@
 # Super Mario Bros Reinforcement Learning
 
-Train an AI agent to play Super Mario Bros using PPO (Proximal Policy Optimization).
+## Project Information
+
+**Course**: CSC 480 - Artificial Intelligence, Cal Poly
+
+**Instructor**: Rodrigo Canaan
+
+**Team Members**:
+- Jared Hammett
+- Garrett Reinhard
+- Peter Chinh
+- Alyssa Gerardo
+- Liza Znamerovskaya
+- Matthew Stavros
+
+## Acknowledgments
+
+This project uses the following external libraries and resources:
+
+- **[gym-super-mario-bros](https://github.com/Kautenja/gym-super-mario-bros)** - OpenAI Gym environment for Super Mario Bros
+- **[Stable-Baselines3](https://stable-baselines3.readthedocs.io/)** - High-quality implementations of reinforcement learning algorithms
+- **JoypadSpace compatibility fix** - Code snippet from [StackOverflow (aaron, 2023)](https://stackoverflow.com/questions/76509663/typeerror-joypadspace-reset-got-an-unexpected-keyword-argument-seed-when-i), License: CC BY-SA 4.0
+
+## Project Overview
+
+Train an AI agent to play Super Mario Bros using PPO (Proximal Policy Optimization) with customizable reward functions. The project includes two distinct reward strategies: one optimized for speed completion and another for coin collection.
 
 ## Prerequisites
 
@@ -22,12 +46,20 @@ pip install opencv-python
 # The above installs may update numpy, so run this after:
 pip install --force-reinstall "numpy<2.0"
 ```
+## Branch Structure
+
+- `main` - Coin-Based model
+- `trained_model_v1` - Right-Only base model that completes 1-1
+- `trained_model_world_1` - World 1 Completion Model
+- `trained_model_score` - Score-Based model (completes World 1)
+- `trained_model_world_2` - World 1+2 Model (completes World 1, 2-3, 2-4)
 
 ## Project Structure
 
 - `game.py` - Environment testing script (runs random actions, NO training)
 - `train.py` - **Train the RL agent** (saves models to `./models/`)
 - `test_model.py` - Watch a trained agent play
+- `MultiEvalCallback.py` - Evaluates model on given levels
 - `models/` - Saved model checkpoints (created during training)
 - `logs/` - TensorBoard logs (created during training)
 
@@ -40,21 +72,41 @@ python game.py
 This runs random actions to verify the environment works. Press ESC to quit.
 
 ### 2. Train the Agent
+
+#### Basic Training (Default - Coins Mode)
 ```bash
 python train.py
 ```
 This will:
-- Train for 1,000,000 timesteps (adjust `TOTAL_TIMESTEPS` in the script)
-- Train from a list of levels (adjust `levels` in the script)
-- Save checkpoints every 50,000 steps to `./models/`
-- Save final model as `mario_ppo_final.zip`
+- Train for 15,000,000 timesteps (configurable via `TOTAL_TIMESTEPS` in train.py)
+- Save checkpoints every 500,000 steps to `./models/` (configurable via `SAVE_FREQ` in train.py)
+- Save best model as `best_mode/best_mean_model.zip`
+- Use the custom reward function
 - Can take several hours depending on your hardware
 
-**Monitor training progress:**
+#### Training with Different Reward Functions
+
+The project includes two reward strategies that can be configured in `train.py` on line 54:
+
+#### Additional Training Parameters
+
+You can customize training by modifying these variables in `train.py`:
+
+- `NUM_ENV` (line 20): Number of parallel environments (default: cpu_count - 2)
+- `TOTAL_TIMESTEPS` (line 21): Total training steps (default: 15,000,000)
+- `SAVE_FREQ` (line 22): Model checkpoint frequency (default: 500,000)
+- `FRAME_SKIP` (line 27): Action repeat duration (default: 4, higher = longer jumps)
+- `USE_CUSTOM_REWARD` (line 28): Enable/disable custom rewards (default: True)
+
+#### Monitor Training Progress
 ```bash
 tensorboard --logdir ./logs
 ```
-Then open http://localhost:6006 in your browser
+Then open http://localhost:6006 in your browser to view:
+- Episode reward over time
+- Episode length
+- Loss curves
+- Other training metrics
 
 ### 3. Test the Trained Agent
 ```bash
@@ -65,36 +117,90 @@ Or specify a specific checkpoint:
 python test_model.py ./models/mario_ppo_500000_steps.zip
 ```
 
+## Reproducing Experimental Results
+
+1. **Train agent**:
+   ```bash
+   python train.py
+   # Models will be saved to ./models/mario_ppo_*.zip
+   # Best Model will be saved to ./best_model/best_mean_model.zip
+   ```
+
+2. **Train best model after it starts beating 2 levels**:
+   ```bash
+   python train.py ./best_model/best_mean_model.zip
+   # Models will be saved to ./models/ (rename or move previous models first)
+   ```
+
+3. **Evaluate trained agent**:
+   ```bash
+   python test_model.py ./best_model/best_mean_model.zip
+   ```
+
+### Expected Training Time
+
+**Note**: Full training is computationally expensive:
+- 15,000,000 timesteps takes approximately 20 hours but will vary drastically depending on hardware
+- GPU acceleration recommended for faster training (set `device="cuda"` in train.py line 75)
+- Checkpoints are saved every 500,000 steps for intermediate evaluation
+
 ## Features
 
-### Custom Reward Function
-The agent is trained with a custom reward function that:
-- Rewards forward progress (+0.1 per unit)
-- Penalizes backward movement (-0.2 per unit)
-- Rewards score increases (+0.01 per point)
-- Rewards coin collection (+1.0 per coin)
-- Heavily penalizes death (-50)
-- Big reward for level completion (+100)
-- Small time penalty to encourage speed (-0.01 per second)
+### Best Model Saved
+Automatically saves the best performing model based on average reward across given levels. 
 
-### Frame Skip
-Actions are held for 4 frames by default, allowing Mario to:
-- Jump higher (hold jump button longer)
-- Move more consistently
+### Frame Skip Wrapper
+
+Actions are held for 4 frames by default (see `game.py:17-51`), allowing Mario to:
+- Jump higher by holding the jump button longer
+- Move more consistently across frames
 - Have better momentum control
 
-Adjust in `train.py` or `test_model.py`:
+Adjust frame skip in `train.py` line 27 or when calling `make_mario_env()`:
 ```python
-env = make_mario_env(frame_skip=6)  # Higher = longer jumps
+env = make_mario_env(frame_skip=6)  # Higher = longer jumps/actions
 ```
 
 ## Hyperparameters
 
-Default PPO settings in `train.py`:
-- Learning rate: 3e-4
-- Batch size: 64
-- Number of epochs: 10
-- Discount factor (gamma): 0.99
-- Entropy coefficient: 0.01
+Default PPO settings configured in `train.py` (lines 70-86):
 
-Tune these for better performance!
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `learning_rate` | 2.5e-4 | Step size for policy gradient updates |
+| `n_steps` | 2048 | Steps to collect before policy update |
+| `batch_size` | 256 | Minibatch size for SGD updates |
+| `n_epochs` | 10 | Number of epochs per policy update |
+| `gamma` | 0.99 | Discount factor for future rewards |
+| `gae_lambda` | 0.95 | Lambda parameter for GAE (Generalized Advantage Estimation) |
+| `clip_range` | 0.2 | PPO clipping parameter |
+| `ent_coef` | 0.01 | Entropy coefficient for exploration |
+| `vf_coef` | 0.5 | Value function coefficient in loss |
+| `max_grad_norm` | 0.5 | Maximum gradient norm for clipping |
+
+These hyperparameters are optimized for stable training. Modifications can be made in `train.py` to experiment with different values.
+
+### Key Implementation Details
+
+- **Parallel Training**: Uses `SubprocVecEnv` to run multiple Mario environments in parallel, significantly speeding up data collection
+- **Modular Design**: Reward functions are implemented as gym wrappers, making it easy to add new reward strategies
+- **Robust Step Handling**: Code handles both gym and gymnasium API formats for compatibility
+- **Checkpoint System**: Automatic model saving during training allows for recovery and intermediate evaluation
+
+## Troubleshooting
+
+**Issue**: "gym-super-mario-bros installation fails"
+- **Solution**: Install Visual Studio Build Tools for C++ (required for compilation)
+
+**Issue**: "NumPy version incompatibility"
+- **Solution**: Ensure NumPy < 2.0 with `pip install --force-reinstall "numpy<2.0"`
+
+**Issue**: "Training is slow"
+- **Solution**: Increase `NUM_ENV` for more parallel environments, or enable GPU with `device="cuda"` in train.py
+
+**Issue**: "Mario doesn't jump high enough"
+- **Solution**: Increase `FRAME_SKIP` parameter to hold actions longer (try 6 or 8)
+
+## License
+
+This project is for educational purposes as part of CSC 480 at California Polytechnic University San Luis Obispo.
